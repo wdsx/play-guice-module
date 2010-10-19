@@ -12,6 +12,7 @@ public class Mails extends Mailer {
    public static void welcome() {
       setSubject("Welcome %s", test.printer());
       addRecipient("testsomething@hotmail.com");
+      setFrom("sender@gmail.com");
 	  Logger.info("sending a test email:"+ test.printer());
       send();
    }
