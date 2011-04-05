@@ -21,131 +21,141 @@ import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Module;
 import com.google.inject.name.Named;
+
 /**
- *  Enable <a href="http://google-guice.googlecode.com">Guice</a> integration
- *  in Playframework.
- *  This plugin first scans for a custom Guice Injector if it's not found, then
- *  it tries to create an injector from all the guice modules available on the classpath.
- *  The Plugin is then passed to Play injector for Controller IoC.
- *
- *  @author <a href="mailto:info@lucianofiandesio.com">Luciano Fiandesio</a>
- *  @author <a href="mailto:info@hausel@freemail.hu">Peter Hausel</a>
+ * Enable <a href="http://google-guice.googlecode.com">Guice</a> integration in
+ * Playframework. This plugin first scans for a custom Guice Injector if it's
+ * not found, then it tries to create an injector from all the guice modules
+ * available on the classpath. The Plugin is then passed to Play injector for
+ * Controller IoC.
+ * 
+ * @author <a href="mailto:info@lucianofiandesio.com">Luciano Fiandesio</a>
+ * @author <a href="mailto:info@hausel@freemail.hu">Peter Hausel</a>
+ * @author <a href="mailto:lrgalego@gmail.com">Lucas Galego</a>
  */
 public class GuicePlugin extends PlayPlugin implements BeanSource {
-
 	
-    Injector injector;
+	private Injector injector;
+	private final List<Module> modules = new ArrayList<Module>();
 
-    @Override
-    public void onApplicationStart() {
-        
-        final List<Module> modules = new ArrayList<Module>();
-        final List<Class> ll = Play.classloader.getAllClasses();
-        Logger.debug("Starting Guice modules scanning");
-		Boolean newInjectorNeeded = true;
-		StringBuffer moduleList = new StringBuffer();
-        for (final Class clz : ll) {
-        	//first check if there is a custom Injector on the classpath, if so, stop scanning 
-			//and ignore modules altogether
-			if (clz.getSuperclass() != null && GuiceSupport.class.isAssignableFrom(clz)) {
-               try {
-			       GuiceSupport gs = (GuiceSupport) clz.newInstance();
-			       this.injector = gs.configure();
-			       newInjectorNeeded = false;
-               	   Logger.info("Guice injector was found: " + clz.getName());
-			   	   break;
-			   } catch (Exception e) {
-				    e.printStackTrace();
-					throw new IllegalStateException("Unable to create Guice Injector for " + clz.getName());
-			   }
+	@Override
+	public void onApplicationStart() {	
+		Logger.debug("Starting Guice modules scanning");
+		loadInjector();
+		play.inject.Injector.inject(this);
+		injectAnnotated();
+	}
+
+	private void loadInjector(){
+		try {
+			for (final Class clazz : Play.classloader.getAllClasses()) {
+				if(clazz.getSuperclass() == null){
+					continue;
+				}
+				if (isCustomInjector(clazz)) {
+					loadCustomInjector(clazz);
+					return;
+				}
+				if (isGuiceModule(clazz)) {
+					modules.add((Module) clazz.newInstance());
+				}
 			}
-            if (clz.getSuperclass() != null && AbstractModule.class.isAssignableFrom(clz)) {
-                try {
-                    modules.add((Module) clz.newInstance());
-                	moduleList.append(clz.getName()+" ");
-                } catch (Exception e) {
-					e.printStackTrace();
-					throw new IllegalStateException("Unable to create Guice module for " + clz.getName());
-                }
-            }
-
-
-        }
-		if (newInjectorNeeded && modules.isEmpty()) {
-			 throw new IllegalStateException("could not find any custom guice injector or abstract modules. Are you sure you have at least one on the classpath?");
+			loadInjectorFromModules();
+		} catch (Exception e) {
+			throw new IllegalStateException("Unable to create Guice injector");
 		}
-        if (!modules.isEmpty() && newInjectorNeeded) {
-			Logger.info("Guice modules were found: "+moduleList);
-            this.injector = Guice.createInjector(modules);
-        } 
-        // play inject Controller/Job/Mail only at the moment
-        play.inject.Injector.inject(this);
-        
-        // let's inject other classes with play.modules.guice.InjectSupport annotation
-        injectAnnotated(this);
-    }
+	}
+	
+	private boolean isCustomInjector(Class clazz){
+		return GuiceSupport.class.isAssignableFrom(clazz);
+	}
+	
+	private boolean isGuiceModule(Class clazz){
+		return AbstractModule.class.isAssignableFrom(clazz);
+	}
+	
+	private void loadCustomInjector(Class clazz) throws InstantiationException, IllegalAccessException {
+		final GuiceSupport gs = (GuiceSupport) clazz.newInstance();
+		injector = gs.configure();
+		Logger.info("Guice injector created: " + clazz.getName());
+	}
+	
+	private void loadInjectorFromModules(){
+		if(modules.isEmpty()){
+			throw new IllegalStateException("Could not find any custom guice injector or abstract modules. Are you sure you have at least one on the classpath?");
+		}
+		injector = Guice.createInjector(modules);
+		Logger.info("Guice injector created with modules: " + moduleList());
+	}
 
-    public <T> T getBeanOfType(Class<T> clazz) {
-        if (this.injector==null)return null;
-        T bean = null;
-        try{
-        	bean = this.injector.getInstance(clazz);
-        }
-        catch(ConfigurationException ex){
-        	Logger.error(ex.getMessage());
-        }
-        
-        return bean;
-    }
-    
-    public <T> T getBeanWithKey(Key<T> key){
-    	if (this.injector==null)return null;
-        return this.injector.getInstance(key);
-    }
-    
-    private void injectAnnotated(BeanSource source) {
-        List<Class> classes = Play.classloader.getAnnotatedClasses(play.modules.guice.InjectSupport.class);
-        for(Class<?> clazz : classes) {
-            for(Field field : clazz.getDeclaredFields()) {
-                if(Modifier.isStatic(field.getModifiers()) && field.isAnnotationPresent(Inject.class)) {
-                    Class<?> type = field.getType();
-                    field.setAccessible(true);
-                    
-                    try {
-                    	// for guice binding annotations to work, we must inspect the field's annotations
-	                	Annotation [] annotations = field.getAnnotations();
-	                	Annotation bindingAnnotation = null;
-	                	for (Annotation annotation : annotations){
-	                		
-	                		// field uses guice's built in Named annotation
-	                		if (annotation.annotationType().equals(Named.class)){
-	                			bindingAnnotation = annotation;
-	                		}
-	                		
-	                		// check for custom annotations marked with guice's BindingAnnotation
-	                		Annotation [] internalAnnotations = annotation.annotationType().getAnnotations();
-	                		for (Annotation internal : internalAnnotations){
-		                		if (internal.annotationType().equals(BindingAnnotation.class)){
-		                			bindingAnnotation = annotation;
-		                		}
-	                		}
-	                	}
-	                	
-	                	// if we found a bindingAnnotation, then fetch the bounded bean with a key
-	                	if (bindingAnnotation != null){
-	                		Key<?> key = Key.get(type, bindingAnnotation);
-	                		field.set(null, getBeanWithKey(key));
-	                	}
-	                	else{
-	                		field.set(null, source.getBeanOfType(type));
-	                	}
-                    } catch(RuntimeException e) {
-                        throw e;
-                    } catch(Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            }
-        }
-    }
+	private String moduleList(){
+		final StringBuilder moduleList = new StringBuilder("\n");
+		for(Module module : modules){
+			moduleList.append(module.getClass());
+			moduleList.append("\n");
+		}
+		return moduleList.toString();
+	}
+
+	public <T> T getBeanOfType(Class<T> clazz) {
+		if (this.injector == null)
+			return null;
+		T bean = null;
+		try {
+			bean = this.injector.getInstance(clazz);
+		} catch (ConfigurationException ex) {
+			Logger.error(ex.getMessage());
+		}
+
+		return bean;
+	}
+
+	public <T> T getBeanWithKey(Key<T> key) {
+		if (this.injector == null)
+			return null;
+		return this.injector.getInstance(key);
+	}
+
+	private void injectAnnotated(){
+		try{
+			for (Class<?> clazz : Play.classloader.getAnnotatedClasses(play.modules.guice.InjectSupport.class)) {
+				for (Field field : clazz.getDeclaredFields()) {
+					if (isInjectable(field)) {
+						inject(field);
+					}
+				}
+			}
+		} catch(Exception e){
+			throw new RuntimeException("Error injecting dependencies", e);
+		}
+	}
+	
+	private boolean isInjectable(Field field){
+		return Modifier.isStatic(field.getModifiers()) && field.isAnnotationPresent(Inject.class);
+	}
+	
+	private void inject(Field field) throws IllegalAccessException {
+		field.setAccessible(true);
+		final Annotation fieldBinding = fieldBinding(field);
+		if(fieldBinding != null){
+			field.set(null, getBeanWithKey(Key.get(field.getType(), fieldBinding)));
+		} else {
+			field.set(null, getBeanOfType(field.getType()));
+		}
+	}
+	
+	private Annotation fieldBinding(Field field){
+		for (Annotation annotation : field.getAnnotations()) {
+			if (annotation.annotationType().equals(Named.class)) {
+				return annotation;
+			}
+			for (Annotation internal : annotation.annotationType().getAnnotations()) {
+				if (internal.annotationType().equals(BindingAnnotation.class)) {
+					return annotation;
+				}
+			}
+		}
+		return null;
+	}
+	
 }
