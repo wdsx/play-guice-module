@@ -98,22 +98,22 @@ public class GuicePlugin extends PlayPlugin implements BeanSource {
 	}
 
 	public <T> T getBeanOfType(Class<T> clazz) {
-		if (this.injector == null)
+		if (injector == null){
 			return null;
-		T bean = null;
-		try {
-			bean = this.injector.getInstance(clazz);
-		} catch (ConfigurationException ex) {
-			Logger.error(ex.getMessage());
 		}
-
-		return bean;
+		try {
+			return injector.getInstance(clazz);
+		} catch (ConfigurationException e) {
+			Logger.error(e.getMessage());
+			return null;
+		}
 	}
 
 	public <T> T getBeanWithKey(Key<T> key) {
-		if (this.injector == null)
+		if (injector == null){
 			return null;
-		return this.injector.getInstance(key);
+		}
+		return injector.getInstance(key);
 	}
 
 	private void injectAnnotated(){
