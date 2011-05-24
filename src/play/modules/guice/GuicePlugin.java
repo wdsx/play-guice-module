@@ -32,6 +32,7 @@ import com.google.inject.name.Named;
  * @author <a href="mailto:info@lucianofiandesio.com">Luciano Fiandesio</a>
  * @author <a href="mailto:info@hausel@freemail.hu">Peter Hausel</a>
  * @author <a href="mailto:lrgalego@gmail.com">Lucas Galego</a>
+ * @author <a href="mailto:a.a.vasiljev@gmail.com">Alexander Vasiljev</a>
  */
 public class GuicePlugin extends PlayPlugin implements BeanSource {
 	
@@ -48,6 +49,8 @@ public class GuicePlugin extends PlayPlugin implements BeanSource {
 
 	private void loadInjector(){
 		try {
+            modules.clear();
+            Logger.debug("Guice modules cleared");
 			for (final Class clazz : Play.classloader.getAllClasses()) {
 				if(clazz.getSuperclass() == null){
 					continue;
@@ -62,7 +65,7 @@ public class GuicePlugin extends PlayPlugin implements BeanSource {
 			}
 			loadInjectorFromModules();
 		} catch (Exception e) {
-			throw new IllegalStateException("Unable to create Guice injector");
+			throw new IllegalStateException("Unable to create Guice injector", e);
 		}
 	}
 	
